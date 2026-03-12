@@ -1,0 +1,70 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id        String   @id @default(cuid())
+  name      String
+  pin       String   // hashed PIN for auth
+  role      Role     @default(WORKER)
+  active    Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  sessions  WorkSession[]
+}
+
+enum Role {
+  WORKER
+  ADMIN
+}
+
+model WorkSession {
+  id          String    @id @default(cuid())
+  userId      String
+  user        User      @relation(fields: [userId], references: [id])
+  startTime   DateTime
+  endTime     DateTime?
+  duration    Int?      // milliseconds
+  slipNumber  String?
+  taskType    String?
+  transcript  String?
+  notes       String?
+  photos      Photo[]
+  status      SessionStatus @default(ACTIVE)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@index([userId])
+  @@index([slipNumber])
+  @@index([startTime])
+}
+
+enum SessionStatus {
+  ACTIVE
+  COMPLETED
+}
+
+model Photo {
+  id        String      @id @default(cuid())
+  sessionId String
+  session   WorkSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  url       String
+  filename  String
+  createdAt DateTime    @default(now())
+
+  @@index([sessionId])
+}
+
+model PushSubscription {
+  id        String   @id @default(cuid())
+  userId    String
+  endpoint  String   @unique
+  p256dh    String
+  auth      String
+  createdAt DateTime @default(now())
+}

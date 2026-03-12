@@ -1,0 +1,125 @@
+import { NextRequest, NextResponse } from "next/server";
+import { getServerSession } from "next-auth";
+import { authOptions } from "@/lib/auth";
+import { prisma } from "@/lib/db";
+import { parseTranscript } from "@/lib/parse-transcript";
+
+// GET /api/sessions — list sessions
+export async function GET(req: NextRequest) {
+  const session = await getServerSession(authOptions);
+  if (!session?.user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+
+  const { searchParams } = new URL(req.url);
+  const userId = searchParams.get("userId");
+  const slip = searchParams.get("slip");
+  const task = searchParams.get("task");
+  const isAdmin = (session.user as any).role === "ADMIN";
+
+  const where: any = {};
+
+  // Workers can only see their own sessions
+  if (!isAdmin) {
+    where.userId = (session.user as any).id;
+  } else if (userId) {
+    where.userId = userId;
+  }
+
+  if (slip) where.slipNumber = slip;
+  if (task) where.taskType = task;
+
+  const sessions = await prisma.workSession.findMany({
+    where,
+    include: { user: { select: { name: true } }, photos: true },
+    orderBy: { startTime: "desc" },
+    take: 200,
+  });
+
+  return NextResponse.json(sessions);
+}
+
+// POST /api/sessions — clock in (create session)
+export async function POST(req: NextRequest) {
+  const session = await getServerSession(authOptions);
+  if (!session?.user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+
+  const userId = (session.user as any).id;
+
+  // Check for active session
+  const active = await prisma.workSession.findFirst({
+    where: { userId, status: "ACTIVE" },
+  });
+  if (active) {
+    return NextResponse.json({ error: "Already clocked in", activeSession: active }, { status: 400 });
+  }
+
+  const workSession = await prisma.workSession.create({
+    data: {
+      userId,
+      startTime: new Date(),
+      status: "ACTIVE",
+    },
+  });
+
+  return NextResponse.json(workSession);
+}
+
+// PATCH /api/sessions — clock out or update session
+export async function PATCH(req: NextRequest) {
+  const session = await getServerSession(authOptions);
+  if (!session?.user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+
+  const body = await req.json();
+  const { sessionId, action, transcript, slipNumber, taskType, notes } = body;
+
+  if (!sessionId) return NextResponse.json({ error: "sessionId required" }, { status: 400 });
+
+  const workSession = await prisma.workSession.findUnique({ where: { id: sessionId } });
+  if (!workSession) return NextResponse.json({ error: "Session not found" }, { status: 404 });
+
+  // Clock out
+  if (action === "clockOut") {
+    const endTime = new Date();
+    const duration = endTime.getTime() - workSession.startTime.getTime();
+
+    const updated = await prisma.workSession.update({
+      where: { id: sessionId },
+      data: { endTime, duration, status: "COMPLETED" },
+    });
+    return NextResponse.json(updated);
+  }
+
+  // Update with transcript/memo
+  if (action === "addMemo") {
+    let parsedSlip = slipNumber;
+    let parsedTask = taskType;
+
+    // Auto-parse transcript if provided
+    if (transcript && (!parsedSlip || !parsedTask)) {
+      const parsed = parseTranscript(transcript);
+      if (!parsedSlip) parsedSlip = parsed.slipNumber;
+      if (!parsedTask) parsedTask = parsed.taskType;
+    }
+
+    const updated = await prisma.workSession.update({
+      where: { id: sessionId },
+      data: {
+        transcript: transcript || undefined,
+        slipNumber: parsedSlip || undefined,
+        taskType: parsedTask || undefined,
+        notes: notes || transcript || undefined,
+      },
+    });
+    return NextResponse.json(updated);
+  }
+
+  // General update
+  const updated = await prisma.workSession.update({
+    where: { id: sessionId },
+    data: {
+      slipNumber: slipNumber !== undefined ? slipNumber : undefined,
+      taskType: taskType !== undefined ? taskType : undefined,
+      notes: notes !== undefined ? notes : undefined,
+    },
+  });
+  return NextResponse.json(updated);
+}
