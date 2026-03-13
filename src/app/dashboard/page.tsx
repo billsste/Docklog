@@ -151,6 +151,12 @@ export default function TimerPage() {
     if (manualText.trim()) applyTranscript(manualText.trim());
   };
 
+  const cancelSession = async () => {
+    if (!activeSessionId) return;
+    await fetch(`/api/sessions?sessionId=${activeSessionId}`, { method: "DELETE" });
+    resetTimer();
+  };
+
   const saveSession = async () => {
     if (!activeSessionId) return;
     setSaving(true);
@@ -316,6 +322,9 @@ export default function TimerPage() {
 
         <button onClick={saveSession} disabled={saving} className="w-full py-3.5 bg-foreground text-white rounded-xl font-semibold text-[15px] disabled:opacity-50">
           {saving ? "Saving..." : "Save session"}
+        </button>
+        <button onClick={cancelSession} disabled={saving} className="w-full mt-2 py-2.5 text-sm font-medium text-red-500 hover:text-red-600 transition-colors">
+          Cancel session
         </button>
       </div>
     );
