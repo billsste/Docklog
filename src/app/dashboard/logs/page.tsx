@@ -51,16 +51,35 @@ export default function LogsPage() {
             <p className="text-sm text-slate-500 italic leading-relaxed">"{selected.transcript}"</p>
           </div>
         )}
-        {selected.photos?.length > 0 && (
-          <div className="bg-white border border-border rounded-xl p-5 shadow-sm mb-3">
-            <p className="text-[11px] font-semibold text-muted-foreground uppercase tracking-wider mb-2">Photos</p>
-            <div className="flex gap-2 flex-wrap">
-              {selected.photos.map((p: any) => (
-                <img key={p.id} src={p.url} alt="" className="w-20 h-20 rounded-lg object-cover border border-border" />
-              ))}
-            </div>
-          </div>
-        )}
+        {selected.photos?.length > 0 && (() => {
+          const isAudio = (url: string) => /\.(webm|ogg|mp3|m4a|wav|mp4)$/i.test(url);
+          const photos = selected.photos.filter((p: any) => !isAudio(p.url));
+          const audioFiles = selected.photos.filter((p: any) => isAudio(p.url));
+          return (
+            <>
+              {photos.length > 0 && (
+                <div className="bg-white border border-border rounded-xl p-5 shadow-sm mb-3">
+                  <p className="text-[11px] font-semibold text-muted-foreground uppercase tracking-wider mb-2">Photos</p>
+                  <div className="flex gap-2 flex-wrap">
+                    {photos.map((p: any) => (
+                      <img key={p.id} src={p.url} alt="" className="w-20 h-20 rounded-lg object-cover border border-border" />
+                    ))}
+                  </div>
+                </div>
+              )}
+              {audioFiles.length > 0 && (
+                <div className="bg-white border border-border rounded-xl p-5 shadow-sm mb-3">
+                  <p className="text-[11px] font-semibold text-muted-foreground uppercase tracking-wider mb-2">Voice recording</p>
+                  <div className="space-y-2">
+                    {audioFiles.map((p: any) => (
+                      <audio key={p.id} controls src={p.url} className="w-full" />
+                    ))}
+                  </div>
+                </div>
+              )}
+            </>
+          );
+        })()}
         <div className="bg-white border border-border rounded-xl p-5 shadow-sm">
           <p className="text-[11px] font-semibold text-muted-foreground uppercase tracking-wider mb-3">Details</p>
           <div className="space-y-2">

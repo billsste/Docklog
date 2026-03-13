@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useRef, useCallback } from "react";
 import { useSession } from "next-auth/react";
-import { Play, Square, Mic, Keyboard, Check, Camera } from "lucide-react";
+import { Play, Square, Mic, Keyboard, Check, Camera, X } from "lucide-react";
 import { parseTranscript } from "@/lib/parse-transcript";
 
 export default function TimerPage() {
@@ -20,16 +20,18 @@ export default function TimerPage() {
   const [manualText, setManualText] = useState("");
   const [saving, setSaving] = useState(false);
   const [sessionCount, setSessionCount] = useState(0);
-  const [selectedPhoto, setSelectedPhoto] = useState<File | null>(null);
+  const [selectedPhotos, setSelectedPhotos] = useState<File[]>([]);
+  const [audioBlob, setAudioBlob] = useState<Blob | null>(null);
 
   const startTimeRef = useRef<number>(0);
   const intervalRef = useRef<any>(null);
   const recRef = useRef<any>(null);
   const finalTextRef = useRef("");
+  const mediaRecorderRef = useRef<MediaRecorder | null>(null);
+  const audioChunksRef = useRef<Blob[]>([]);
 
   const SR = typeof window !== "undefined" ? ((window as any).SpeechRecognition || (window as any).webkitSpeechRecognition) : null;
 
-  // Check for active session on mount
   useEffect(() => {
     fetch("/api/sessions")
       .then((r) => r.json())
@@ -45,7 +47,6 @@ export default function TimerPage() {
       });
   }, []);
 
-  // Timer tick
   useEffect(() => {
     if (running) {
       intervalRef.current = setInterval(() => {
@@ -70,7 +71,6 @@ export default function TimerPage() {
     if (!activeSessionId) return;
     setRunning(false);
     clearInterval(intervalRef.current);
-
     const res = await fetch("/api/sessions", {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
@@ -89,12 +89,31 @@ export default function TimerPage() {
     setRecState("done");
   }, []);
 
-  const startVoice = () => {
+  const startVoice = async () => {
     if (!SR) { setShowManual(true); return; }
+
+    // Try to record raw audio (requires HTTPS)
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      audioChunksRef.current = [];
+      const mr = new MediaRecorder(stream);
+      mr.ondataavailable = (e) => {
+        if (e.data.size > 0) audioChunksRef.current.push(e.data);
+      };
+      mr.onstop = () => {
+        const blob = new Blob(audioChunksRef.current, { type: mr.mimeType || "audio/webm" });
+        setAudioBlob(blob);
+        stream.getTracks().forEach((t) => t.stop());
+      };
+      mr.start();
+      mediaRecorderRef.current = mr;
+    } catch {
+      // HTTPS required — audio won't be saved but transcript still works
+    }
+
     const r = new SR();
     r.continuous = true; r.interimResults = true; r.lang = "en-US";
     finalTextRef.current = "";
-
     r.onresult = (e: any) => {
       let final = finalTextRef.current;
       for (let i = e.resultIndex; i < e.results.length; i++) {
@@ -107,53 +126,61 @@ export default function TimerPage() {
       else setRecState("idle");
     };
     r.onerror = () => { setRecState("idle"); setShowManual(true); };
-
     r.start();
     recRef.current = r;
     setRecState("recording");
   };
 
-  const stopVoice = () => { recRef.current?.stop(); };
+  const stopVoice = () => {
+    recRef.current?.stop();
+    mediaRecorderRef.current?.stop();
+  };
+
+  const reRecord = () => {
+    recRef.current?.stop();
+    mediaRecorderRef.current?.stop();
+    mediaRecorderRef.current = null;
+    setAudioBlob(null);
+    setTranscript("");
+    setParsedSlip(null);
+    setParsedTask(null);
+    setRecState("idle");
+  };
 
   const submitManual = () => {
     if (manualText.trim()) applyTranscript(manualText.trim());
   };
 
-  const saveMemo = async () => {
+  const saveSession = async () => {
     if (!activeSessionId) return;
     setSaving(true);
 
-    await fetch("/api/sessions", {
-      method: "PATCH",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        sessionId: activeSessionId,
-        action: "addMemo",
-        transcript,
-        slipNumber: parsedSlip,
-        taskType: parsedTask,
-      }),
-    });
-
-    // Upload photo if selected
-    if (selectedPhoto) {
-      const formData = new FormData();
-      formData.append("file", selectedPhoto);
-      formData.append("sessionId", activeSessionId);
-      await fetch("/api/photos", { method: "POST", body: formData });
+    if (transcript) {
+      await fetch("/api/sessions", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ sessionId: activeSessionId, action: "addMemo", transcript, slipNumber: parsedSlip, taskType: parsedTask }),
+      });
     }
 
-    resetTimer();
-  };
+    const uploads: Promise<any>[] = [];
 
-  const skipMemo = async () => {
-    // Upload photo even without memo
-    if (selectedPhoto && activeSessionId) {
-      const formData = new FormData();
-      formData.append("file", selectedPhoto);
-      formData.append("sessionId", activeSessionId);
-      await fetch("/api/photos", { method: "POST", body: formData });
+    for (const photo of selectedPhotos) {
+      const fd = new FormData();
+      fd.append("file", photo);
+      fd.append("sessionId", activeSessionId);
+      uploads.push(fetch("/api/photos", { method: "POST", body: fd }));
     }
+
+    if (audioBlob) {
+      const ext = audioBlob.type.includes("mp4") ? "mp4" : audioBlob.type.includes("ogg") ? "ogg" : "webm";
+      const fd = new FormData();
+      fd.append("file", new File([audioBlob], `audio-${Date.now()}.${ext}`, { type: audioBlob.type }));
+      fd.append("sessionId", activeSessionId);
+      uploads.push(fetch("/api/photos", { method: "POST", body: fd }));
+    }
+
+    await Promise.all(uploads);
     resetTimer();
   };
 
@@ -167,7 +194,9 @@ export default function TimerPage() {
     setRecState("idle");
     setShowManual(false);
     setManualText("");
-    setSelectedPhoto(null);
+    setSelectedPhotos([]);
+    setAudioBlob(null);
+    mediaRecorderRef.current = null;
     setSaving(false);
     setElapsed(0);
     setSessionCount((c) => c + 1);
@@ -186,15 +215,11 @@ export default function TimerPage() {
     return (
       <div className="animate-fadeIn">
         <div className="text-center mb-6 pt-4">
-          <span className="inline-block px-3 py-1 bg-emerald-50 text-emerald-700 text-xs font-semibold rounded-full mb-3">
-            Clocked Out
-          </span>
+          <span className="inline-block px-3 py-1 bg-emerald-50 text-emerald-700 text-xs font-semibold rounded-full mb-3">Clocked Out</span>
           <p className="text-4xl font-extralight tracking-tight tabular-nums">
             {String(dMm).padStart(2, "0")}:{String(dSs).padStart(2, "0")}
           </p>
-          <p className="text-sm text-muted-foreground mt-2">
-            {(session?.user as any)?.name}
-          </p>
+          <p className="text-sm text-muted-foreground mt-2">{(session?.user as any)?.name}</p>
         </div>
 
         {/* Voice memo */}
@@ -208,8 +233,13 @@ export default function TimerPage() {
           </p>
 
           {recState === "done" ? (
-            <div className="flex items-center justify-center gap-2 py-3.5 bg-emerald-50 text-emerald-700 rounded-lg text-sm font-medium">
-              <Check size={16} /> Memo recorded
+            <div>
+              <div className="flex items-center justify-center gap-2 py-3.5 bg-emerald-50 text-emerald-700 rounded-lg text-sm font-medium mb-2">
+                <Check size={16} /> Memo recorded{audioBlob ? " · audio saved" : ""}
+              </div>
+              <button onClick={reRecord} className="w-full py-2 text-xs text-muted-foreground hover:text-foreground flex items-center justify-center gap-1.5 transition-colors">
+                <Mic size={14} /> Re-record
+              </button>
             </div>
           ) : recState === "recording" ? (
             <button onClick={stopVoice} className="w-full py-4 border-2 border-red-300 bg-red-50 text-red-600 rounded-xl flex items-center justify-center gap-3 font-medium">
@@ -255,30 +285,38 @@ export default function TimerPage() {
           </div>
         )}
 
-        {/* Photo attachment */}
+        {/* Photos */}
         <div className="bg-white border border-border rounded-xl p-5 shadow-sm mb-3">
           <p className="text-[11px] font-semibold text-muted-foreground uppercase tracking-wider mb-3">
-            Photo <span className="font-normal opacity-60">(optional)</span>
+            Photos <span className="font-normal opacity-60">(optional)</span>
           </p>
+          {selectedPhotos.length > 0 && (
+            <div className="flex gap-2 flex-wrap mb-3">
+              {selectedPhotos.map((photo, i) => (
+                <div key={i} className="relative">
+                  <img src={URL.createObjectURL(photo)} alt="" className="w-20 h-20 rounded-lg object-cover border border-border" />
+                  <button onClick={() => setSelectedPhotos((prev) => prev.filter((_, j) => j !== i))}
+                    className="absolute -top-1.5 -right-1.5 w-5 h-5 bg-slate-700 text-white rounded-full text-xs flex items-center justify-center">
+                    <X size={10} />
+                  </button>
+                </div>
+              ))}
+            </div>
+          )}
           <label className="w-full py-3 border border-dashed border-border rounded-lg flex items-center justify-center gap-2 text-sm text-slate-500 cursor-pointer hover:border-slate-400 transition-colors">
             <Camera size={16} />
-            {selectedPhoto ? selectedPhoto.name : "Tap to attach a photo"}
-            <input type="file" accept="image/*" capture="environment" className="hidden"
-              onChange={(e) => setSelectedPhoto(e.target.files?.[0] || null)} />
+            {selectedPhotos.length > 0 ? "Add another photo" : "Tap to attach photos"}
+            <input type="file" accept="image/*" multiple className="hidden"
+              onChange={(e) => {
+                const files = Array.from(e.target.files || []);
+                if (files.length) setSelectedPhotos((prev) => [...prev, ...files]);
+              }} />
           </label>
         </div>
 
-        {/* Save buttons */}
-        <div className="flex gap-2">
-          <button onClick={skipMemo} className={`flex-1 py-3.5 rounded-xl font-medium text-[15px] transition-all ${transcript ? "border border-border text-slate-600" : "bg-foreground text-white"}`}>
-            {transcript ? "Skip memo" : "Save session"}
-          </button>
-          {transcript && (
-            <button onClick={saveMemo} disabled={saving} className="flex-1 py-3.5 bg-foreground text-white rounded-xl font-semibold text-[15px] disabled:opacity-50">
-              {saving ? "Saving..." : "Save session"}
-            </button>
-          )}
-        </div>
+        <button onClick={saveSession} disabled={saving} className="w-full py-3.5 bg-foreground text-white rounded-xl font-semibold text-[15px] disabled:opacity-50">
+          {saving ? "Saving..." : "Save session"}
+        </button>
       </div>
     );
   }
