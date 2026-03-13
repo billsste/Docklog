@@ -27,7 +27,7 @@ export default function TimerPage() {
   const recRef = useRef<any>(null);
   const finalTextRef = useRef("");
 
-  const SR = typeof window !== "undefined" ? (window.SpeechRecognition || (window as any).webkitSpeechRecognition) : null;
+  const SR = typeof window !== "undefined" ? ((window as any).SpeechRecognition || (window as any).webkitSpeechRecognition) : null;
 
   // Check for active session on mount
   useEffect(() => {
