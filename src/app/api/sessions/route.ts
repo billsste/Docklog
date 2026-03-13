@@ -63,6 +63,30 @@ export async function POST(req: NextRequest) {
   return NextResponse.json(workSession);
 }
 
+// DELETE /api/sessions — delete a session
+export async function DELETE(req: NextRequest) {
+  const session = await getServerSession(authOptions);
+  if (!session?.user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+
+  const { searchParams } = new URL(req.url);
+  const sessionId = searchParams.get("sessionId");
+  if (!sessionId) return NextResponse.json({ error: "sessionId required" }, { status: 400 });
+
+  const workSession = await prisma.workSession.findUnique({ where: { id: sessionId } });
+  if (!workSession) return NextResponse.json({ error: "Session not found" }, { status: 404 });
+
+  const isAdmin = (session.user as any).role === "ADMIN";
+  const userId = (session.user as any).id;
+
+  // Workers can only delete their own sessions
+  if (!isAdmin && workSession.userId !== userId) {
+    return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+  }
+
+  await prisma.workSession.delete({ where: { id: sessionId } });
+  return NextResponse.json({ success: true });
+}
+
 // PATCH /api/sessions — clock out or update session
 export async function PATCH(req: NextRequest) {
   const session = await getServerSession(authOptions);

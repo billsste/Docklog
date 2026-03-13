@@ -11,6 +11,14 @@ function dur(ms: number) {
 export default function LogsPage() {
   const [logs, setLogs] = useState<any[]>([]);
   const [selected, setSelected] = useState<any>(null);
+  const [confirming, setConfirming] = useState(false);
+
+  async function handleDelete() {
+    await fetch(`/api/sessions?sessionId=${selected.id}`, { method: "DELETE" });
+    setLogs(prev => prev.filter(l => l.id !== selected.id));
+    setSelected(null);
+    setConfirming(false);
+  }
 
   useEffect(() => {
     fetch("/api/sessions").then(r => r.json()).then(data => {
@@ -61,6 +69,19 @@ export default function LogsPage() {
             <p className="text-sm text-slate-500"><span className="text-xs font-medium text-muted-foreground">Notes: </span>{selected.notes || "—"}</p>
           </div>
         </div>
+        {confirming ? (
+          <div className="bg-red-50 border border-red-200 rounded-xl p-4 shadow-sm">
+            <p className="text-sm font-medium text-red-700 mb-3">Delete this log? This cannot be undone.</p>
+            <div className="flex gap-2">
+              <button onClick={handleDelete} className="flex-1 py-2 bg-red-600 text-white text-sm font-semibold rounded-lg">Delete</button>
+              <button onClick={() => setConfirming(false)} className="flex-1 py-2 bg-white border border-border text-sm font-medium rounded-lg">Cancel</button>
+            </div>
+          </div>
+        ) : (
+          <button onClick={() => setConfirming(true)} className="w-full py-2.5 text-sm font-medium text-red-600 border border-red-200 rounded-xl bg-white hover:bg-red-50 transition-colors">
+            Delete Log
+          </button>
+        )}
       </div>
     );
   }
