@@ -20,6 +20,7 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           ssh -i ~/.ssh/deploy_key root@138.197.80.16 "
+            mkdir -p /var/www/uploads && chown -R www-data:www-data /var/www/uploads && chmod -R 755 /var/www/uploads &&
             cd /opt/apps/docklog &&
             git fetch https://x-access-token:$GITHUB_TOKEN@github.com/billsste/Docklog.git main &&
             git reset --hard FETCH_HEAD &&
