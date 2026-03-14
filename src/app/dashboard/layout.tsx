@@ -3,11 +3,12 @@
 import { useSession, signOut } from "next-auth/react";
 import { useRouter, usePathname } from "next/navigation";
 import { useEffect } from "react";
-import { Timer, List, Users, Anchor, LogOut } from "lucide-react";
+import { Timer, List, Users, Anchor, LogOut, MessageCircle } from "lucide-react";
 
 const tabs = [
   { id: "/dashboard", icon: Timer, label: "Timer" },
   { id: "/dashboard/logs", icon: List, label: "My Logs" },
+  { id: "/dashboard/support", icon: MessageCircle, label: "Support" },
   { id: "/dashboard/admin", icon: Users, label: "Admin" },
 ];
 
