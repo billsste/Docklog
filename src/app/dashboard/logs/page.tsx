@@ -1,23 +1,57 @@
 "use client";
 
 import { useState, useEffect } from "react";
-import { ChevronRight, ChevronLeft } from "lucide-react";
+import { ChevronRight, ChevronLeft, Pencil } from "lucide-react";
 
 function dur(ms: number) {
   const s = Math.floor(ms / 1000), h = Math.floor(s / 3600), m = Math.floor((s % 3600) / 60), sec = s % 60;
   return h > 0 ? `${h}h ${String(m).padStart(2, "0")}m` : `${String(m).padStart(2, "0")}:${String(sec).padStart(2, "0")}`;
 }
 
+const isAudio = (url: string) => /\.(webm|ogg|mp3|m4a|wav|mp4)$/i.test(url);
+
 export default function LogsPage() {
   const [logs, setLogs] = useState<any[]>([]);
   const [selected, setSelected] = useState<any>(null);
   const [confirming, setConfirming] = useState(false);
+  const [editing, setEditing] = useState(false);
+  const [editSlip, setEditSlip] = useState("");
+  const [editTask, setEditTask] = useState("");
+  const [editNotes, setEditNotes] = useState("");
+  const [saving, setSaving] = useState(false);
 
   async function handleDelete() {
     await fetch(`/api/sessions?sessionId=${selected.id}`, { method: "DELETE" });
     setLogs(prev => prev.filter(l => l.id !== selected.id));
     setSelected(null);
     setConfirming(false);
+  }
+
+  function startEdit() {
+    setEditSlip(selected.slipNumber || "");
+    setEditTask(selected.taskType || "");
+    setEditNotes(selected.notes || "");
+    setEditing(true);
+  }
+
+  async function saveEdit() {
+    setSaving(true);
+    const res = await fetch("/api/sessions", {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        sessionId: selected.id,
+        slipNumber: editSlip || null,
+        taskType: editTask || null,
+        notes: editNotes || null,
+      }),
+    });
+    const updated = await res.json();
+    const merged = { ...selected, ...updated };
+    setSelected(merged);
+    setLogs(prev => prev.map(l => l.id === merged.id ? merged : l));
+    setSaving(false);
+    setEditing(false);
   }
 
   useEffect(() => {
@@ -27,11 +61,55 @@ export default function LogsPage() {
   }, []);
 
   if (selected) {
+    const photos = selected.photos?.filter((p: any) => !isAudio(p.url)) || [];
+    const audioFiles = selected.photos?.filter((p: any) => isAudio(p.url)) || [];
+
+    if (editing) {
+      return (
+        <div>
+          <button onClick={() => setEditing(false)} className="flex items-center gap-1 text-sm font-medium text-blue-600 mb-4">
+            <ChevronLeft size={18} /> Back
+          </button>
+          <div className="bg-white border border-border rounded-xl p-5 shadow-sm space-y-4">
+            <p className="text-[11px] font-semibold text-muted-foreground uppercase tracking-wider">Edit Log</p>
+            <div>
+              <label className="text-xs font-medium text-muted-foreground block mb-1">Slip Number</label>
+              <input value={editSlip} onChange={e => setEditSlip(e.target.value)}
+                placeholder="e.g. 42"
+                className="w-full px-3 py-2.5 border border-border rounded-lg text-sm focus:border-blue-500 focus:ring-2 focus:ring-blue-100" />
+            </div>
+            <div>
+              <label className="text-xs font-medium text-muted-foreground block mb-1">Task Type</label>
+              <input value={editTask} onChange={e => setEditTask(e.target.value)}
+                placeholder="e.g. Cleaning"
+                className="w-full px-3 py-2.5 border border-border rounded-lg text-sm focus:border-blue-500 focus:ring-2 focus:ring-blue-100" />
+            </div>
+            <div>
+              <label className="text-xs font-medium text-muted-foreground block mb-1">Notes</label>
+              <textarea value={editNotes} onChange={e => setEditNotes(e.target.value)}
+                placeholder="Any notes..."
+                rows={3}
+                className="w-full px-3 py-2.5 border border-border rounded-lg text-sm focus:border-blue-500 focus:ring-2 focus:ring-blue-100 resize-none" />
+            </div>
+            <button onClick={saveEdit} disabled={saving}
+              className="w-full py-3 bg-foreground text-white rounded-xl font-semibold text-sm disabled:opacity-50">
+              {saving ? "Saving..." : "Save changes"}
+            </button>
+          </div>
+        </div>
+      );
+    }
+
     return (
       <div>
-        <button onClick={() => setSelected(null)} className="flex items-center gap-1 text-sm font-medium text-blue-600 mb-4">
-          <ChevronLeft size={18} /> Back
-        </button>
+        <div className="flex items-center justify-between mb-4">
+          <button onClick={() => { setSelected(null); setConfirming(false); }} className="flex items-center gap-1 text-sm font-medium text-blue-600">
+            <ChevronLeft size={18} /> Back
+          </button>
+          <button onClick={startEdit} className="flex items-center gap-1.5 text-sm font-medium text-slate-600">
+            <Pencil size={14} /> Edit
+          </button>
+        </div>
         <div className="bg-white border border-border rounded-xl p-5 shadow-sm mb-3">
           <div className="flex gap-1.5 flex-wrap mb-3">
             {selected.slipNumber && <span className="px-2.5 py-0.5 bg-blue-50 text-blue-700 text-xs font-semibold rounded-full">Slip {selected.slipNumber}</span>}
@@ -51,36 +129,27 @@ export default function LogsPage() {
             <p className="text-sm text-slate-500 italic leading-relaxed">"{selected.transcript}"</p>
           </div>
         )}
-        {selected.photos?.length > 0 && (() => {
-          const isAudio = (url: string) => /\.(webm|ogg|mp3|m4a|wav|mp4)$/i.test(url);
-          const photos = selected.photos.filter((p: any) => !isAudio(p.url));
-          const audioFiles = selected.photos.filter((p: any) => isAudio(p.url));
-          return (
-            <>
-              {photos.length > 0 && (
-                <div className="bg-white border border-border rounded-xl p-5 shadow-sm mb-3">
-                  <p className="text-[11px] font-semibold text-muted-foreground uppercase tracking-wider mb-2">Photos</p>
-                  <div className="flex gap-2 flex-wrap">
-                    {photos.map((p: any) => (
-                      <img key={p.id} src={p.url} alt="" className="w-20 h-20 rounded-lg object-cover border border-border" />
-                    ))}
-                  </div>
-                </div>
-              )}
-              {audioFiles.length > 0 && (
-                <div className="bg-white border border-border rounded-xl p-5 shadow-sm mb-3">
-                  <p className="text-[11px] font-semibold text-muted-foreground uppercase tracking-wider mb-2">Voice recording</p>
-                  <div className="space-y-2">
-                    {audioFiles.map((p: any) => (
-                      <audio key={p.id} controls src={p.url} className="w-full" />
-                    ))}
-                  </div>
-                </div>
-              )}
-            </>
-          );
-        })()}
-        <div className="bg-white border border-border rounded-xl p-5 shadow-sm">
+        {photos.length > 0 && (
+          <div className="bg-white border border-border rounded-xl p-5 shadow-sm mb-3">
+            <p className="text-[11px] font-semibold text-muted-foreground uppercase tracking-wider mb-2">Photos</p>
+            <div className="flex gap-2 flex-wrap">
+              {photos.map((p: any) => (
+                <img key={p.id} src={p.url} alt="" className="w-20 h-20 rounded-lg object-cover border border-border" />
+              ))}
+            </div>
+          </div>
+        )}
+        {audioFiles.length > 0 && (
+          <div className="bg-white border border-border rounded-xl p-5 shadow-sm mb-3">
+            <p className="text-[11px] font-semibold text-muted-foreground uppercase tracking-wider mb-2">Voice recording</p>
+            <div className="space-y-2">
+              {audioFiles.map((p: any) => (
+                <audio key={p.id} controls src={p.url} className="w-full" />
+              ))}
+            </div>
+          </div>
+        )}
+        <div className="bg-white border border-border rounded-xl p-5 shadow-sm mb-3">
           <p className="text-[11px] font-semibold text-muted-foreground uppercase tracking-wider mb-3">Details</p>
           <div className="space-y-2">
             <p className="text-sm text-slate-500"><span className="text-xs font-medium text-muted-foreground">Slip: </span>{selected.slipNumber || "—"}</p>
@@ -115,7 +184,7 @@ export default function LogsPage() {
       ) : (
         <div className="space-y-2">
           {logs.map((l) => (
-            <button key={l.id} onClick={() => setSelected(l)}
+            <button key={l.id} onClick={() => { setSelected(l); setConfirming(false); setEditing(false); }}
               className="w-full text-left p-3.5 bg-white border border-border rounded-xl flex items-center gap-3 shadow-sm hover:bg-slate-50 transition-colors">
               <div className="flex-1 min-w-0">
                 <div className="flex items-center gap-1.5 flex-wrap mb-1">

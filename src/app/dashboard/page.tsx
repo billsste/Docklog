@@ -301,8 +301,13 @@ export default function TimerPage() {
           {selectedPhotos.length > 0 && (
             <div className="flex gap-2 flex-wrap mb-3">
               {selectedPhotos.map((photo, i) => (
-                <div key={i} className="relative">
-                  <img src={photoPreviews[i]} alt="" className="w-20 h-20 rounded-lg object-cover border border-border" />
+                <div key={i} className="relative w-20 h-20 rounded-lg border border-border bg-slate-100 overflow-hidden flex items-center justify-center">
+                  {photoPreviews[i] ? (
+                    <img src={photoPreviews[i]} alt="" className="w-full h-full object-cover"
+                      onError={(e) => { (e.target as HTMLImageElement).style.display = "none"; }} />
+                  ) : (
+                    <Camera size={20} className="text-slate-400" />
+                  )}
                   <button onClick={() => { setSelectedPhotos((prev) => prev.filter((_, j) => j !== i)); setPhotoPreviews((prev) => prev.filter((_, j) => j !== i)); }}
                     className="absolute -top-1.5 -right-1.5 w-5 h-5 bg-slate-700 text-white rounded-full text-xs flex items-center justify-center">
                     <X size={10} />
@@ -314,7 +319,7 @@ export default function TimerPage() {
           <label className="w-full py-3 border border-dashed border-border rounded-lg flex items-center justify-center gap-2 text-sm text-slate-500 cursor-pointer hover:border-slate-400 transition-colors">
             <Camera size={16} />
             {selectedPhotos.length > 0 ? "Add another photo" : "Tap to attach photos"}
-            <input type="file" accept="image/*" multiple className="hidden"
+            <input type="file" accept="image/jpeg,image/png,image/gif,image/webp" multiple className="hidden"
               onChange={(e) => {
                 const files = Array.from(e.target.files || []);
                 if (!files.length) return;
@@ -322,6 +327,7 @@ export default function TimerPage() {
                 files.forEach((file) => {
                   const reader = new FileReader();
                   reader.onload = (ev) => setPhotoPreviews((prev) => [...prev, ev.target?.result as string]);
+                  reader.onerror = () => setPhotoPreviews((prev) => [...prev, ""]);
                   reader.readAsDataURL(file);
                 });
               }} />
