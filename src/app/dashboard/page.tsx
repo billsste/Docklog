@@ -21,6 +21,7 @@ export default function TimerPage() {
   const [saving, setSaving] = useState(false);
   const [sessionCount, setSessionCount] = useState(0);
   const [selectedPhotos, setSelectedPhotos] = useState<File[]>([]);
+  const [photoPreviews, setPhotoPreviews] = useState<string[]>([]);
   const [audioBlob, setAudioBlob] = useState<Blob | null>(null);
 
   const startTimeRef = useRef<number>(0);
@@ -201,6 +202,7 @@ export default function TimerPage() {
     setShowManual(false);
     setManualText("");
     setSelectedPhotos([]);
+    setPhotoPreviews([]);
     setAudioBlob(null);
     mediaRecorderRef.current = null;
     setSaving(false);
@@ -300,8 +302,8 @@ export default function TimerPage() {
             <div className="flex gap-2 flex-wrap mb-3">
               {selectedPhotos.map((photo, i) => (
                 <div key={i} className="relative">
-                  <img src={URL.createObjectURL(photo)} alt="" className="w-20 h-20 rounded-lg object-cover border border-border" />
-                  <button onClick={() => setSelectedPhotos((prev) => prev.filter((_, j) => j !== i))}
+                  <img src={photoPreviews[i]} alt="" className="w-20 h-20 rounded-lg object-cover border border-border" />
+                  <button onClick={() => { setSelectedPhotos((prev) => prev.filter((_, j) => j !== i)); setPhotoPreviews((prev) => prev.filter((_, j) => j !== i)); }}
                     className="absolute -top-1.5 -right-1.5 w-5 h-5 bg-slate-700 text-white rounded-full text-xs flex items-center justify-center">
                     <X size={10} />
                   </button>
@@ -315,7 +317,13 @@ export default function TimerPage() {
             <input type="file" accept="image/*" multiple className="hidden"
               onChange={(e) => {
                 const files = Array.from(e.target.files || []);
-                if (files.length) setSelectedPhotos((prev) => [...prev, ...files]);
+                if (!files.length) return;
+                setSelectedPhotos((prev) => [...prev, ...files]);
+                files.forEach((file) => {
+                  const reader = new FileReader();
+                  reader.onload = (ev) => setPhotoPreviews((prev) => [...prev, ev.target?.result as string]);
+                  reader.readAsDataURL(file);
+                });
               }} />
           </label>
         </div>
