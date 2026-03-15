@@ -3,10 +3,11 @@
 import { useSession, signOut } from "next-auth/react";
 import { useRouter, usePathname } from "next/navigation";
 import { useEffect } from "react";
-import { Timer, List, Users, Anchor, LogOut, MessageCircle } from "lucide-react";
+import { Timer, List, Users, Anchor, LogOut, MessageCircle, Wrench } from "lucide-react";
 
 const tabs = [
   { id: "/dashboard", icon: Timer, label: "Timer" },
+  { id: "/dashboard/work-orders", icon: Wrench, label: "Work Orders" },
   { id: "/dashboard/logs", icon: List, label: "My Logs" },
   { id: "/dashboard/support", icon: MessageCircle, label: "Support" },
   { id: "/dashboard/admin", icon: Users, label: "Admin" },
@@ -29,7 +30,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
     );
   }
 
-  if (!session) return null;
+  if (!session) { router.push("/login"); return null; }
 
   const user = session.user as any;
   const isAdmin = user?.role === "ADMIN";

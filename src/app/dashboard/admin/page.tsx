@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect, useRef, useCallback } from "react";
-import { Download, Settings, Plus, X, ChevronRight, ChevronLeft, Pencil, Mic, Check } from "lucide-react";
+import { Download, Settings, Plus, X, ChevronRight, ChevronLeft, Pencil, Mic, Check, Wrench } from "lucide-react";
 import { parseTranscript } from "@/lib/parse-transcript";
 
 function dur(ms: number) {
@@ -117,24 +117,27 @@ export default function AdminPage() {
 
   const saveEdit = async () => {
     setSaving(true);
-    const res = await fetch("/api/sessions", {
-      method: "PATCH",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ sessionId: selected.id, slipNumber: editSlip || null, taskType: editTask || null, notes: editNotes || null, transcript: editTranscript || undefined }),
-    });
-    const updated = await res.json();
-    if (audioBlob) {
-      const ext = audioBlob.type.includes("mp4") ? "mp4" : audioBlob.type.includes("ogg") ? "ogg" : "webm";
-      const fd = new FormData();
-      fd.append("file", new File([audioBlob], `audio-${Date.now()}.${ext}`, { type: audioBlob.type }));
-      fd.append("sessionId", selected.id);
-      await fetch("/api/photos", { method: "POST", body: fd });
+    try {
+      const res = await fetch("/api/sessions", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ sessionId: selected.id, slipNumber: editSlip || null, taskType: editTask || null, notes: editNotes || null, transcript: editTranscript || undefined }),
+      });
+      const updated = await res.json();
+      if (audioBlob) {
+        const ext = audioBlob.type.includes("mp4") ? "mp4" : audioBlob.type.includes("ogg") ? "ogg" : "webm";
+        const fd = new FormData();
+        fd.append("file", new File([audioBlob], `audio-${Date.now()}.${ext}`, { type: audioBlob.type }));
+        fd.append("sessionId", selected.id);
+        await fetch("/api/photos", { method: "POST", body: fd });
+      }
+      const merged = { ...selected, ...updated };
+      setSelected(merged);
+      setLogs(prev => prev.map(l => l.id === merged.id ? merged : l));
+      setEditing(false);
+    } finally {
+      setSaving(false);
     }
-    const merged = { ...selected, ...updated };
-    setSelected(merged);
-    setLogs(prev => prev.map(l => l.id === merged.id ? merged : l));
-    setSaving(false);
-    setEditing(false);
   };
 
   const allSlips = [...new Set(logs.filter(l => l.slipNumber).map(l => l.slipNumber))].sort();
@@ -258,6 +261,14 @@ export default function AdminPage() {
             <p className="text-sm text-slate-500"><span className="text-xs font-medium text-muted-foreground">Slip: </span>{selected.slipNumber || "—"}</p>
             <p className="text-sm text-slate-500"><span className="text-xs font-medium text-muted-foreground">Task: </span>{selected.taskType || "—"}</p>
             <p className="text-sm text-slate-500"><span className="text-xs font-medium text-muted-foreground">Notes: </span>{selected.notes || "—"}</p>
+            {selected.harborDeskWorkOrderTitle && (
+              <p className="text-sm text-slate-500"><span className="text-xs font-medium text-muted-foreground">Work Order: </span>
+                <span className="text-indigo-600 font-medium">{selected.harborDeskWorkOrderTitle}</span>
+              </p>
+            )}
+            {selected.syncedToHarborDesk && (
+              <p className="text-[11px] text-emerald-600 font-semibold">✓ Synced to HarborDesk</p>
+            )}
           </div>
         </div>
         {confirming ? (
@@ -345,7 +356,13 @@ export default function AdminPage() {
                 <div className="flex items-center gap-1.5 flex-wrap mb-1">
                   {l.slipNumber && <span className="px-2 py-0.5 bg-blue-50 text-blue-700 text-[10px] font-semibold rounded-full">Slip {l.slipNumber}</span>}
                   {l.taskType && <span className="px-2 py-0.5 bg-amber-50 text-amber-700 text-[10px] font-semibold rounded-full">{l.taskType}</span>}
-                  {!l.slipNumber && !l.taskType && <span className="px-2 py-0.5 bg-slate-100 text-slate-400 text-[10px] font-semibold rounded-full">No details</span>}
+                  {l.harborDeskWorkOrderTitle && (
+                    <span className="flex items-center gap-0.5 px-2 py-0.5 bg-indigo-50 text-indigo-600 text-[10px] font-semibold rounded-full">
+                      <Wrench size={9} /> {l.harborDeskWorkOrderTitle.length > 24 ? l.harborDeskWorkOrderTitle.slice(0, 24) + "…" : l.harborDeskWorkOrderTitle}
+                    </span>
+                  )}
+                  {l.syncedToHarborDesk && <span className="px-2 py-0.5 bg-emerald-50 text-emerald-600 text-[10px] font-semibold rounded-full">Synced</span>}
+                  {!l.slipNumber && !l.taskType && !l.harborDeskWorkOrderTitle && <span className="px-2 py-0.5 bg-slate-100 text-slate-400 text-[10px] font-semibold rounded-full">No details</span>}
                 </div>
                 <p className="text-[13px] text-slate-500">{l.user?.name} · {dur(l.duration || 0)}</p>
                 <p className="text-[11px] text-muted-foreground">

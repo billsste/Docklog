@@ -2,8 +2,23 @@
 
 import { useState, useEffect, useRef, useCallback } from "react";
 import { useSession } from "next-auth/react";
-import { Play, Square, Mic, Keyboard, Check, Camera, X } from "lucide-react";
+import { Play, Square, Mic, Keyboard, Check, Camera, X, Wrench, Anchor, AlertTriangle } from "lucide-react";
 import { parseTranscript } from "@/lib/parse-transcript";
+
+interface SelectedWO {
+  id: number;
+  work_order_number: string;
+  title: string;
+  slip_name?: string;
+  priority: string;
+  description?: string;
+}
+
+const PRIORITY_COLOR: Record<string, string> = {
+  high: "text-red-500",
+  medium: "text-amber-500",
+  low: "text-slate-400",
+};
 
 export default function TimerPage() {
   const { data: session } = useSession();
@@ -23,6 +38,7 @@ export default function TimerPage() {
   const [selectedPhotos, setSelectedPhotos] = useState<File[]>([]);
   const [photoPreviews, setPhotoPreviews] = useState<string[]>([]);
   const [audioBlob, setAudioBlob] = useState<Blob | null>(null);
+  const [selectedWO, setSelectedWO] = useState<SelectedWO | null>(null);
 
   const startTimeRef = useRef<number>(0);
   const intervalRef = useRef<any>(null);
@@ -34,6 +50,12 @@ export default function TimerPage() {
   const SR = typeof window !== "undefined" ? ((window as any).SpeechRecognition || (window as any).webkitSpeechRecognition) : null;
 
   useEffect(() => {
+    // Load selected work order from localStorage
+    try {
+      const stored = localStorage.getItem("docklog_selected_wo");
+      if (stored) setSelectedWO(JSON.parse(stored));
+    } catch {}
+
     fetch("/api/sessions")
       .then((r) => r.json())
       .then((sessions) => {
@@ -43,6 +65,16 @@ export default function TimerPage() {
           startTimeRef.current = new Date(active.startTime).getTime();
           setRunning(true);
           setElapsed(Date.now() - startTimeRef.current);
+          // Reload WO from active session if it has one
+          if (active.harborDeskWorkOrderId && !localStorage.getItem("docklog_selected_wo")) {
+            setSelectedWO({
+              id: active.harborDeskWorkOrderId,
+              work_order_number: "",
+              title: active.harborDeskWorkOrderTitle || "Work Order",
+              slip_name: active.slipNumber,
+              priority: "medium",
+            });
+          }
         }
         setSessionCount(sessions.filter((s: any) => s.status === "COMPLETED").length);
       });
@@ -58,7 +90,15 @@ export default function TimerPage() {
   }, [running]);
 
   const clockIn = async () => {
-    const res = await fetch("/api/sessions", { method: "POST" });
+    const res = await fetch("/api/sessions", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        harborDeskWorkOrderId: selectedWO?.id,
+        harborDeskWorkOrderTitle: selectedWO?.title,
+        slipNumber: selectedWO?.slip_name,
+      }),
+    });
     const data = await res.json();
     if (data.id) {
       setActiveSessionId(data.id);
@@ -70,30 +110,35 @@ export default function TimerPage() {
 
   const clockOut = async () => {
     if (!activeSessionId) return;
-    setRunning(false);
     clearInterval(intervalRef.current);
-    const res = await fetch("/api/sessions", {
-      method: "PATCH",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ sessionId: activeSessionId, action: "clockOut" }),
-    });
-    const data = await res.json();
-    setCompletedSession(data);
-    setPhase("memo");
+    try {
+      const res = await fetch("/api/sessions", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ sessionId: activeSessionId, action: "clockOut" }),
+      });
+      const data = await res.json();
+      setRunning(false);
+      setCompletedSession(data);
+      setPhase("memo");
+      // Pre-fill slip from selected WO
+      if (selectedWO?.slip_name && !parsedSlip) setParsedSlip(selectedWO.slip_name);
+    } catch {
+      // revert on failure so user can retry
+    }
   };
 
   const applyTranscript = useCallback((text: string) => {
     setTranscript(text);
     const parsed = parseTranscript(text);
-    setParsedSlip(parsed.slipNumber);
-    setParsedTask(parsed.taskType);
+    setParsedSlip((prev) => prev || parsed.slipNumber);
+    setParsedTask((prev) => prev || parsed.taskType);
     setRecState("done");
   }, []);
 
   const startVoice = async () => {
     if (!SR) { setShowManual(true); return; }
 
-    // Try to record raw audio (requires HTTPS)
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
       audioChunksRef.current = [];
@@ -109,7 +154,7 @@ export default function TimerPage() {
       mr.start();
       mediaRecorderRef.current = mr;
     } catch {
-      // HTTPS required — audio won't be saved but transcript still works
+      // HTTPS required
     }
 
     const r = new SR();
@@ -143,7 +188,7 @@ export default function TimerPage() {
     mediaRecorderRef.current = null;
     setAudioBlob(null);
     setTranscript("");
-    setParsedSlip(null);
+    setParsedSlip(selectedWO?.slip_name || null);
     setParsedTask(null);
     setRecState("idle");
   };
@@ -162,13 +207,22 @@ export default function TimerPage() {
     if (!activeSessionId) return;
     setSaving(true);
 
-    if (transcript) {
-      await fetch("/api/sessions", {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ sessionId: activeSessionId, action: "addMemo", transcript, slipNumber: parsedSlip, taskType: parsedTask }),
-      });
-    }
+    // Use WO slip if no slip parsed from memo
+    const finalSlip = parsedSlip || selectedWO?.slip_name || null;
+
+    await fetch("/api/sessions", {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        sessionId: activeSessionId,
+        action: "addMemo",
+        transcript,
+        slipNumber: finalSlip,
+        taskType: parsedTask,
+        harborDeskWorkOrderId: selectedWO?.id,
+        harborDeskWorkOrderTitle: selectedWO?.title,
+      }),
+    });
 
     const uploads: Promise<any>[] = [];
 
@@ -188,6 +242,7 @@ export default function TimerPage() {
     }
 
     await Promise.all(uploads);
+    setSessionCount((c) => c + 1);
     resetTimer();
   };
 
@@ -207,7 +262,11 @@ export default function TimerPage() {
     mediaRecorderRef.current = null;
     setSaving(false);
     setElapsed(0);
-    setSessionCount((c) => c + 1);
+  };
+
+  const clearWorkOrder = () => {
+    localStorage.removeItem("docklog_selected_wo");
+    setSelectedWO(null);
   };
 
   const mm = Math.floor((elapsed % 3600000) / 60000);
@@ -217,6 +276,7 @@ export default function TimerPage() {
   // ─── MEMO PHASE ───
   if (phase === "memo" && completedSession) {
     const durMs = completedSession.duration || elapsed;
+    const dHh = Math.floor(durMs / 3600000);
     const dMm = Math.floor((durMs % 3600000) / 60000);
     const dSs = Math.floor((durMs % 60000) / 1000);
 
@@ -225,10 +285,28 @@ export default function TimerPage() {
         <div className="text-center mb-6 pt-4">
           <span className="inline-block px-3 py-1 bg-emerald-50 text-emerald-700 text-xs font-semibold rounded-full mb-3">Clocked Out</span>
           <p className="text-4xl font-extralight tracking-tight tabular-nums">
-            {String(dMm).padStart(2, "0")}:{String(dSs).padStart(2, "0")}
+            {dHh > 0 && `${String(dHh).padStart(2, "0")}:`}{String(dMm).padStart(2, "0")}:{String(dSs).padStart(2, "0")}
           </p>
           <p className="text-sm text-muted-foreground mt-2">{(session?.user as any)?.name}</p>
         </div>
+
+        {/* Work order context */}
+        {selectedWO && (
+          <div className="bg-blue-50 border border-blue-200 rounded-xl px-4 py-3 mb-3">
+            <p className="text-[10px] font-semibold text-blue-500 uppercase tracking-wider mb-0.5">Work Order</p>
+            <p className="text-sm font-semibold text-blue-900">{selectedWO.title}</p>
+            <div className="flex items-center gap-2 mt-0.5">
+              {selectedWO.work_order_number && (
+                <span className="text-[10px] font-mono text-blue-400">{selectedWO.work_order_number}</span>
+              )}
+              {selectedWO.slip_name && (
+                <span className="flex items-center gap-0.5 text-[10px] text-blue-600 font-medium">
+                  <Anchor size={9} /> Slip {selectedWO.slip_name}
+                </span>
+              )}
+            </div>
+          </div>
+        )}
 
         {/* Voice memo */}
         <div className="bg-white border border-border rounded-xl p-5 shadow-sm mb-3">
@@ -335,7 +413,7 @@ export default function TimerPage() {
         </div>
 
         <button onClick={saveSession} disabled={saving} className="w-full py-3.5 bg-foreground text-white rounded-xl font-semibold text-[15px] disabled:opacity-50">
-          {saving ? "Saving..." : "Save session"}
+          {saving ? "Saving..." : selectedWO ? "Save & sync to HarborDesk" : "Save session"}
         </button>
         <button onClick={cancelSession} disabled={saving} className="w-full mt-2 py-2.5 text-sm font-medium text-red-500 hover:text-red-600 transition-colors">
           Cancel session
@@ -346,7 +424,50 @@ export default function TimerPage() {
 
   // ─── TIMER PHASE ───
   return (
-    <div className="flex flex-col items-center pt-10">
+    <div className="flex flex-col items-center pt-6">
+      {/* Work order context banner */}
+      {selectedWO ? (
+        <div className="w-full bg-blue-50 border border-blue-200 rounded-xl px-4 py-3 mb-6 flex items-start gap-3">
+          <div className="flex-1 min-w-0">
+            <p className="text-[10px] font-semibold text-blue-500 uppercase tracking-wider mb-0.5">
+              Work Order
+            </p>
+            <p className="text-sm font-semibold text-blue-900 leading-snug truncate">{selectedWO.title}</p>
+            <div className="flex items-center gap-2 mt-0.5 flex-wrap">
+              {selectedWO.work_order_number && (
+                <span className="text-[10px] font-mono text-blue-400">{selectedWO.work_order_number}</span>
+              )}
+              {selectedWO.slip_name && (
+                <span className="flex items-center gap-0.5 text-[10px] text-blue-600 font-medium">
+                  <Anchor size={9} /> Slip {selectedWO.slip_name}
+                </span>
+              )}
+              {selectedWO.priority === "high" && (
+                <span className="flex items-center gap-0.5 text-[10px] text-red-500 font-medium">
+                  <AlertTriangle size={9} /> High priority
+                </span>
+              )}
+            </div>
+          </div>
+          {!running && (
+            <button onClick={clearWorkOrder} className="text-[11px] text-blue-400 hover:text-blue-600 transition-colors px-2 py-1 rounded border border-blue-200 bg-white flex-shrink-0">
+              Change
+            </button>
+          )}
+        </div>
+      ) : (
+        <div className="w-full border border-dashed border-slate-200 rounded-xl px-4 py-3 mb-6 flex items-center gap-2 text-slate-400">
+          <Wrench size={14} />
+          <span className="text-xs">No work order selected · </span>
+          <button
+            onClick={() => { if (typeof window !== "undefined") window.location.href = "/dashboard/work-orders"; }}
+            className="text-xs text-blue-500 font-medium hover:underline"
+          >
+            Select one
+          </button>
+        </div>
+      )}
+
       <p className={`text-7xl font-extralight tracking-tight tabular-nums transition-colors duration-300 ${running ? "text-foreground" : "text-slate-300"}`}>
         {hh > 0 && `${hh}:`}{String(mm).padStart(2, "0")}:{String(ss).padStart(2, "0")}
       </p>

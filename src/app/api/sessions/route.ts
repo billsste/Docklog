@@ -4,6 +4,40 @@ import { authOptions } from "@/lib/auth";
 import { prisma } from "@/lib/db";
 import { parseTranscript } from "@/lib/parse-transcript";
 
+const HARBORDESK_URL = process.env.HARBORDESK_URL || "http://localhost:3200";
+const HARBORDESK_API_KEY = process.env.HARBORDESK_API_KEY || "hd_internal_key_2026";
+
+async function pushSessionToHarborDesk(workSession: any, workerName: string) {
+  if (!workSession.harborDeskWorkOrderId || workSession.syncedToHarborDesk) return;
+  try {
+    const photoUrls = (workSession.photos || [])
+      .filter((p: any) => !p.url.match(/\.(webm|ogg|mp3|m4a|wav|mp4)$/i))
+      .map((p: any) => p.url.startsWith("http") ? p.url : `${HARBORDESK_URL}${p.url}`);
+
+    await fetch(`${HARBORDESK_URL}/api/internal/work-orders/${workSession.harborDeskWorkOrderId}/sessions`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "x-api-key": HARBORDESK_API_KEY },
+      body: JSON.stringify({
+        docklogSessionId: workSession.id,
+        workerName,
+        duration: workSession.duration,
+        transcript: workSession.transcript,
+        notes: workSession.notes,
+        slipNumber: workSession.slipNumber,
+        taskType: workSession.taskType,
+        photoUrls,
+      }),
+    });
+
+    await prisma.workSession.update({
+      where: { id: workSession.id },
+      data: { syncedToHarborDesk: true },
+    });
+  } catch (err: any) {
+    console.error("HarborDesk push failed:", err.message);
+  }
+}
+
 // GET /api/sessions — list sessions
 export async function GET(req: NextRequest) {
   const session = await getServerSession(authOptions);
@@ -52,11 +86,18 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "Already clocked in", activeSession: active }, { status: 400 });
   }
 
+  let body: any = {};
+  try { body = await req.json(); } catch {}
+  const { harborDeskWorkOrderId, harborDeskWorkOrderTitle, slipNumber } = body;
+
   const workSession = await prisma.workSession.create({
     data: {
       userId,
       startTime: new Date(),
       status: "ACTIVE",
+      ...(harborDeskWorkOrderId && { harborDeskWorkOrderId: Number(harborDeskWorkOrderId) }),
+      ...(harborDeskWorkOrderTitle && { harborDeskWorkOrderTitle }),
+      ...(slipNumber && { slipNumber }),
     },
   });
 
@@ -93,7 +134,7 @@ export async function PATCH(req: NextRequest) {
   if (!session?.user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
   const body = await req.json();
-  const { sessionId, action, transcript, slipNumber, taskType, notes } = body;
+  const { sessionId, action, transcript, slipNumber, taskType, notes, harborDeskWorkOrderId, harborDeskWorkOrderTitle } = body;
 
   if (!sessionId) return NextResponse.json({ error: "sessionId required" }, { status: 400 });
 
@@ -130,9 +171,19 @@ export async function PATCH(req: NextRequest) {
         transcript: transcript || undefined,
         slipNumber: parsedSlip || undefined,
         taskType: parsedTask || undefined,
-        notes: notes || transcript || undefined,
+        notes: notes || undefined,
+        ...(harborDeskWorkOrderId && !workSession.harborDeskWorkOrderId && {
+          harborDeskWorkOrderId: Number(harborDeskWorkOrderId),
+          harborDeskWorkOrderTitle: harborDeskWorkOrderTitle || undefined,
+        }),
       },
+      include: { photos: true },
     });
+
+    // Auto-push to HarborDesk if linked to a work order
+    const workerName = (session.user as any).name || "Unknown";
+    await pushSessionToHarborDesk(updated, workerName);
+
     return NextResponse.json(updated);
   }
 

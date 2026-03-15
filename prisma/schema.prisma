@@ -24,24 +24,29 @@ enum Role {
 }
 
 model WorkSession {
-  id          String    @id @default(cuid())
-  userId      String
-  user        User      @relation(fields: [userId], references: [id])
-  startTime   DateTime
-  endTime     DateTime?
-  duration    Int?      // milliseconds
-  slipNumber  String?
-  taskType    String?
-  transcript  String?
-  notes       String?
-  photos      Photo[]
-  status      SessionStatus @default(ACTIVE)
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
+  id                       String    @id @default(cuid())
+  userId                   String
+  user                     User      @relation(fields: [userId], references: [id])
+  startTime                DateTime
+  endTime                  DateTime?
+  duration                 Int?      // milliseconds
+  slipNumber               String?
+  taskType                 String?
+  transcript               String?
+  notes                    String?
+  photos                   Photo[]
+  status                   SessionStatus @default(ACTIVE)
+  // HarborDesk work order linkage
+  harborDeskWorkOrderId    Int?
+  harborDeskWorkOrderTitle String?
+  syncedToHarborDesk       Boolean   @default(false)
+  createdAt                DateTime  @default(now())
+  updatedAt                DateTime  @updatedAt
 
   @@index([userId])
   @@index([slipNumber])
   @@index([startTime])
+  @@index([harborDeskWorkOrderId])
 }
 
 enum SessionStatus {
